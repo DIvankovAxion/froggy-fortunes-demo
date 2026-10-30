@@ -3733,6 +3733,10 @@ window.Art = (() => {
   function loadImg(src) {
     return new Promise((res) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
   }
+  const FROG_OPEN_LIP = [[146, 115], [152, 122.5], [156, 125.5], [160, 132.5], [164, 135.5], [168, 138.5], [172, 141.5], [176, 145.5],
+    [180, 148.5], [184, 150.5], [188, 154], [192, 157], [196, 160.5], [200, 162.5], [208, 164.5], [216, 167.5], [228, 168.5],
+    [236, 169.5], [244, 168.5], [252, 167.5], [260, 164.5], [268, 160.5], [272, 158.5], [276, 153.5], [280, 147.5], [284, 138.5],
+    [288, 124.5], [291, 100], [300, 88], [318, 150], [306, 236], [140, 236], [130, 160], [134, 112]];
   function normMeta(m, img, key) {
     m = m || {};
     const w = m.w || (img && img.naturalWidth) || 1, h = m.h || (img && img.naturalHeight) || 1;
@@ -3745,7 +3749,12 @@ window.Art = (() => {
     }
     // generated frog poses come without pivots: the mouth measured on the delivered sheet (open: the open mouth)
     if (key && key.startsWith('frog_') && !key.startsWith('frog_top') && !piv.mouth) piv.mouth = key === 'frog_open' ? [w * 0.556, h * 0.36] : [w * 0.5, h * 0.41];
-    return { w, h, ax: m.ax != null ? m.ax : (m.anchor ? m.anchor[0] : 0.5), ay: m.ay != null ? m.ay : (m.anchor ? m.anchor[1] : 0.5), pivots: piv, frames: m.frames || null, at: Array.isArray(m.at) ? m.at : null, waterline: typeof m.waterline === 'number' ? m.waterline : null, reeds: Array.isArray(m.reeds) ? m.reeds : null };
+    // frog_open: the tongue root sits behind the lower lip; lip = the lower lip/jaw outline 1.5 px below the mouth edge
+    // (measured on the 424 x 396 sheet), cut out of the pose and drawn over the tongue root
+    const open = key === 'frog_open', sx = w / 424, sy = h / 396;
+    if (open && !piv.tongue) piv.tongue = [236 * sx, 182 * sy];
+    const lip = m.lip || (open ? FROG_OPEN_LIP.map(([x, y]) => [x * sx, y * sy]) : null);
+    return { w, h, ax: m.ax != null ? m.ax : (m.anchor ? m.anchor[0] : 0.5), ay: m.ay != null ? m.ay : (m.anchor ? m.anchor[1] : 0.5), pivots: piv, lip, frames: m.frames || null, at: Array.isArray(m.at) ? m.at : null, waterline: typeof m.waterline === 'number' ? m.waterline : null, reeds: Array.isArray(m.reeds) ? m.reeds : null };
   }
   async function load(onProgress) {
     let list = [];
@@ -4997,53 +5006,114 @@ function updateLeaves(dt) {
   }
 }
 
-// ---------------------------------------------------------------- the tongue (pink rope with a tip blob)
-// across the tongue (v): a dark 2 px edge, a pink body and a glossy highlight
-const tongueTex = canvasTex(8, 64, (x, w, h) => {
+// ---------------------------------------------------------------- the tongue (fleshy rope with a sticky pad)
+// across the tongue (v 0 -> 1 = right -> left side of an upward tongue): soft rim, rose underside, a faint centre
+// groove, a wet gloss stripe on the lit left side; salmon to match the painted tongue of frog_open
+const tongueTex = canvasTex(64, 96, (x, w, h) => {
   const g = x.createLinearGradient(0, 0, 0, h);
-  g.addColorStop(0, '#7a1840'); g.addColorStop(0.05, '#9a2050'); g.addColorStop(0.14, '#e04c84'); g.addColorStop(0.35, '#f878aa'); g.addColorStop(0.46, '#ffc6dc');
-  g.addColorStop(0.58, '#f6709e'); g.addColorStop(0.86, '#d8407a'); g.addColorStop(0.95, '#9a2050'); g.addColorStop(1, '#7a1840');
+  [[0, 'rgba(104,26,24,0)'], [0.05, '#7a221f'], [0.12, '#a43a33'], [0.25, '#cd5a4a'], [0.42, '#e9765f'], [0.5, '#df6a56'],
+    [0.56, '#ee7d66'], [0.64, '#fa9a80'], [0.71, '#ffb9a2'], [0.78, '#f99a80'], [0.87, '#ec7d65'], [0.93, '#c4503f'],
+    [0.96, '#8e2c26'], [1, 'rgba(104,26,24,0)']].forEach(([k, c]) => g.addColorStop(k, c));
   x.fillStyle = g; x.fillRect(0, 0, w, h);
+  // wet glints: broken specular dashes along the lit side, so the sheen reads moist rather than striped
+  x.fillStyle = 'rgba(255,246,240,0.85)';
+  for (const [u0, u1, k] of [[0.04, 0.2, 0.7], [0.27, 0.5, 0.9], [0.56, 0.66, 0.6], [0.72, 0.94, 0.85]]) {
+    x.globalAlpha = k; x.beginPath(); x.ellipse(w * (u0 + u1) / 2, h * 0.7, w * (u1 - u0) / 2, h * 0.025, 0, 0, Math.PI * 2); x.fill();
+  }
+  x.globalAlpha = 1;
 }, { mipmap: false });
-const tongueTipTex = canvasTex(128, 128, (x, w) => {
-  const g = x.createRadialGradient(w * 0.4, w * 0.36, 2, w / 2, w / 2, w / 2);
-  g.addColorStop(0, '#ffe0ec'); g.addColorStop(0.35, '#ff8cb8'); g.addColorStop(0.78, '#e0447e'); g.addColorStop(0.93, '#a42456'); g.addColorStop(1, '#7a1840');
-  x.fillStyle = g; x.beginPath(); x.ellipse(w / 2, w / 2, w / 2 - 2, w / 2 - 8, 0, 0, Math.PI * 2); x.fill();
-  x.fillStyle = 'rgba(255,255,255,0.7)'; x.beginPath(); x.ellipse(w * 0.38, w * 0.32, 13, 8, -0.5, 0, Math.PI * 2); x.fill();
+// the sticky pad seen from above: a fat glossy oval, its top is the leading end
+const tongueTipTex = canvasTex(128, 120, (x, w, h) => {
+  const g = x.createRadialGradient(w * 0.42, h * 0.38, 3, w / 2, h / 2, w * 0.52);
+  [[0, '#ffd9cb'], [0.3, '#fb9f86'], [0.62, '#ec7860'], [0.84, '#c8513f'], [0.95, '#8c2b25'], [1, 'rgba(110,30,26,0)']].forEach(([k, c]) => g.addColorStop(k, c));
+  x.fillStyle = g; x.beginPath(); x.ellipse(w / 2, h / 2, w / 2 - 2, h / 2 - 2, 0, 0, Math.PI * 2); x.fill();
+  x.strokeStyle = 'rgba(255,214,200,0.45)'; x.lineWidth = 3; x.beginPath(); x.ellipse(w / 2, h / 2, w / 2 - 9, h / 2 - 9, 0, 0.35, 1.9); x.stroke();
+  x.fillStyle = 'rgba(255,255,255,0.8)'; x.beginPath(); x.ellipse(w * 0.36, h * 0.3, 15, 8, -0.45, 0, Math.PI * 2); x.fill();
+  x.fillStyle = 'rgba(255,255,255,0.55)'; x.beginPath(); x.arc(w * 0.56, h * 0.24, 3.5, 0, Math.PI * 2); x.fill();
 });
-// the tongue: a mesh strip tapering from TONGUE_W0 at the mouth to TONGUE_W1 at the tip (board px), a sticky tip blob
-const TONGUE_W0 = 64, TONGUE_W1 = 44, TONGUE_TIP = 90;
+const salivaTex = canvasTex(24, 24, (x, w) => {
+  const g = x.createRadialGradient(w * 0.4, w * 0.38, 1, w / 2, w / 2, w / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)'); g.addColorStop(0.45, 'rgba(255,226,220,0.7)'); g.addColorStop(0.85, 'rgba(236,150,140,0.45)'); g.addColorStop(1, 'rgba(236,150,140,0)');
+  x.fillStyle = g; x.fillRect(0, 0, w, w);
+});
+// the tongue (board px): TONGUE_ROOT wide at the root (behind the lower lip), necks to TONGUE_MID, swells into the
+// pad; it thins as it stretches, bows with its speed, wobbles at hold; .drops holds the saliva flung on impact
+const TONGUE_ROOT = 52, TONGUE_MID = 30, TONGUE_PAD = 56;
+const sstep = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
 class Tongue extends PIXI.Container {
   constructor() {
     super();
-    const n = this.N = 24;
+    const n = this.N = 28;
     this.pts = Array.from({ length: n }, () => new PIXI.Point());
     const verts = new Float32Array(n * 4), uvs = new Float32Array(n * 4), idx = new Uint16Array((n - 1) * 6);
     for (let i = 0; i < n; i++) { const u = i / (n - 1); uvs.set([u, 0, u, 1], i * 4); if (i < n - 1) idx.set([2 * i, 2 * i + 1, 2 * i + 2, 2 * i + 1, 2 * i + 3, 2 * i + 2], i * 6); }
     this.rope = new PIXI.SimpleMesh(tongueTex, verts, uvs, idx, PIXI.DRAW_MODES.TRIANGLES);
     this.tip = new PIXI.Sprite(tongueTipTex); this.tip.anchor.set(0.5);
+    this.drops = new PIXI.Container();
     this.addChild(this.rope, this.tip);
     this.base = { x: 0, y: 0 }; this.len = 0; this.wob = 0; this.wobT = 0; this.ang = -Math.PI / 2;
+    this.prev = 0; this.vel = 0; this.bend = 0; this.side = 1; this.sq = 0;
     this.visible = false;
   }
-  // set the strip from base to len along ang, with a decaying lateral wobble
-  update(dt) {
-    if (!this.visible) return;
-    this.wobT += dt * speed;
-    const ca = Math.cos(this.ang), sa = Math.sin(this.ang), nx = -sa, ny = ca;
-    const L2 = Math.max(2, this.len), v = this.rope.vertices, grow = Math.min(1, L2 / 160);
-    for (let i = 0; i < this.N; i++) {
-      const u = i / (this.N - 1);
-      const w = this.wob * Math.sin(u * Math.PI) * Math.sin(this.wobT * 30 + u * 3);
-      const px = this.base.x + ca * L2 * u + nx * w, py = this.base.y + sa * L2 * u + ny * w;
-      this.pts[i].set(px, py);
-      const half = lerp(TONGUE_W0, TONGUE_W1, u) * (0.55 + 0.45 * grow) / 2;
-      v[i * 4] = px + nx * half; v[i * 4 + 1] = py + ny * half; v[i * 4 + 2] = px - nx * half; v[i * 4 + 3] = py - ny * half;
+  // saliva: a few droplets flung forward off the pad when it hits
+  splash(x, y) {
+    const ca = Math.cos(this.ang), sa = Math.sin(this.ang);
+    for (let i = 0; i < 5; i++) {
+      const d = this.drops.children.find((c) => !c.visible) || this.drops.addChild(new PIXI.Sprite(salivaTex));
+      const a = this.ang + rnd(-1.1, 1.1), sp = rnd(160, 340);
+      d.anchor.set(0.5); d.visible = true; d.alpha = 1; d.width = d.height = rnd(7, 14);
+      d.position.set(x + ca * 22 + rnd(-14, 14), y + sa * 22); d.vx = Math.cos(a) * sp; d.vy = Math.sin(a) * sp; d.life = d.l0 = rnd(0.28, 0.45);
     }
-    const tp = this.pts[this.N - 1];
+  }
+  updateDrops(dt) {
+    for (const d of this.drops.children) {
+      if (!d.visible) continue;
+      d.life -= dt; if (d.life <= 0) { d.visible = false; continue; }
+      d.vy += 900 * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.alpha = Math.min(1, (d.life / d.l0) * 2);
+    }
+  }
+  // the centre line from base along ang, bent sideways by its speed (whip out, trail back) and the hold wobble
+  update(dt) {
+    const gdt = dt * speed;
+    this.updateDrops(gdt);
+    if (!this.visible) { this.prev = 0; this.vel = 0; this.bend = 0; this.sq = 0; return; }
+    this.wobT += gdt;
+    if (this.prev < 2 && this.len > 2) this.side = Math.random() < 0.5 ? -1 : 1;
+    const v = gdt > 0 ? (this.len - this.prev) / gdt : this.vel;
+    if (this.vel > 300 && v <= 0 && this.len > 80) { this.sq = 1; const t = this.pts[this.N - 1]; this.splash(t.x, t.y); }
+    this.prev = this.len; this.vel = v;
+    this.sq = Math.max(0, this.sq - gdt * 5);
+    const L2 = Math.max(2, this.len), lim = Math.min(34, L2 * (v > 0 ? 0.09 : 0.05));
+    this.bend += (clamp(v * (v > 0 ? 0.008 : -0.004), -lim, lim) - this.bend) * Math.min(1, gdt * 22);
+    const still = 1 - clamp(Math.abs(v) / 400, 0, 1);
+    const ca = Math.cos(this.ang), sa = Math.sin(this.ang), nx = -sa, ny = ca, N = this.N, P = this.pts;
+    for (let i = 0; i < N; i++) {
+      const u = i / (N - 1), bow = Math.sin(Math.PI * u);
+      // out: a bow with an S whip; back: the middle trails the other way; hold: a soft breathing wobble
+      let w = this.side * this.bend * (bow + (v > 0 ? 0.35 * Math.sin(2 * Math.PI * u) : 0));
+      w += this.wob * bow * Math.sin(this.wobT * 30 + u * 3) + still * 2.2 * bow * Math.sin(this.wobT * 9 + u * 2.6);
+      P[i].set(this.base.x + ca * L2 * u + nx * w, this.base.y + sa * L2 * u + ny * w);
+    }
+    // width: wide root -> neck -> slight bulb before the pad; stretching thins it (keeps its volume)
+    const thin = clamp(Math.pow(320 / Math.max(320, L2), 0.3), 0.74, 1) * (1 - 0.12 * clamp(v / 5000, 0, 1));
+    const mid = TONGUE_MID * thin, vt = this.rope.vertices;
+    for (let i = 0; i < N; i++) {
+      const s = (L2 * i) / (N - 1), a = P[Math.max(0, i - 1)], b = P[Math.min(N - 1, i + 1)];
+      let tx = b.x - a.x, ty = b.y - a.y; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const half = (mid + (TONGUE_ROOT - mid) * (1 - sstep(0, 120, s)) + mid * 0.65 * sstep(L2 - 110, L2, s)) / 2;
+      vt[i * 4] = P[i].x - ty * half; vt[i * 4 + 1] = P[i].y + tx * half; vt[i * 4 + 2] = P[i].x + ty * half; vt[i * 4 + 3] = P[i].y - tx * half;
+    }
+    // the pad lies across the tongue, squashes on impact and grows in as the tongue leaves the mouth
+    const tp = P[N - 1], pe = P[N - 2], k = (TONGUE_PAD * (0.55 + 0.45 * sstep(0, 120, L2))) / tongueTipTex.width;
     this.tip.position.set(tp.x, tp.y);
-    const sz = lerp(TONGUE_W1, TONGUE_TIP, grow);
-    this.tip.width = sz; this.tip.height = sz;
+    this.tip.rotation = Math.atan2(tp.y - pe.y, tp.x - pe.x) + Math.PI / 2;
+    this.tip.scale.set(k * (1 + 0.2 * this.sq), k * (1 - 0.22 * this.sq));
+  }
+  // the point d px along the tongue from its root (the stuck bugs ride it back)
+  at(d) {
+    const N = this.N, f = clamp(d / Math.max(1, this.len), 0, 1) * (N - 1), i = Math.min(N - 2, Math.floor(f)), t = f - i;
+    const a = this.pts[i], b = this.pts[i + 1];
+    return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) };
   }
   get tipPos() { const p = this.pts[this.N - 1]; return { x: p.x, y: p.y }; }
 }
@@ -5431,7 +5501,10 @@ board.addChild(padLayer, haloLayer, lotusLayer, bugLayer, logLayer, spotLayer, f
 const tipLayer = new PIXI.Container(); board.addChildAt(tipLayer, board.getChildIndex(stuckLayer) + 1);
 const bfx = particles(board);
 const tongue = new Tongue(); tongueLayer.addChild(tongue);
-tipLayer.addChild(tongue.tip); // the sticky tip is drawn over the caught bug
+tipLayer.addChild(tongue.tip, tongue.drops); // the sticky pad and its saliva are drawn over the caught bug
+// the open mouth's lower lip and jaw, cut from frog_open, over the tongue root and the bugs it swallows
+const mouthFront = new PIXI.Container(), lipShade = new PIXI.Sprite(softDot), lipSpr = new PIXI.Sprite();
+lipShade.anchor.set(0.5); lipShade.tint = 0x3a0806; mouthFront.addChild(lipShade, lipSpr); mouthFront.visible = false; tipLayer.addChild(mouthFront);
 
 // pads
 const pads = [];
@@ -5662,6 +5735,40 @@ function mouthPos() {
   const m = frog.meta, mp = (m.pivots && m.pivots.mouth) || [m.w * m.ax, m.h * 0.45];
   const lx = (mp[0] - m.w * m.ax) * frog.k * frog.sx * frog.face, ly = (mp[1] - m.h * m.ay) * frog.k * frog.sy;
   return { x: frog.c.x + lx, y: frog.c.y - frog.alt + ly };
+}
+// frog.c * body * sprite (board-local): the root and the lip follow every squash, breath, skew and flip
+const frogM = new PIXI.Matrix();
+function frogMatrix() {
+  for (const o of [frog.c, frog.body, frog.spr]) o.transform.updateLocalTransform();
+  return frogM.copyFrom(frog.c.localTransform).append(frog.body.localTransform).append(frog.spr.localTransform);
+}
+// the tongue's root: inside the open mouth, behind the lower lip
+function tongueRoot() {
+  const m = frog.meta, p = (m.pivots && (m.pivots.tongue || m.pivots.mouth)) || [m.w * m.ax, m.h * 0.45];
+  return frogMatrix().apply(new PIXI.Point(p[0] - m.w * m.ax, p[1] - m.h * m.ay));
+}
+let lipTex = null;
+function lipTexture() {
+  if (lipTex !== null) return lipTex;
+  const t = Art.tex('frog_open'), m = Art.meta('frog_open'), src = t && t.baseTexture.resource && t.baseTexture.resource.source;
+  lipTex = false;
+  if (!src || !m || !m.lip) return lipTex;
+  lipTex = canvasTex(m.w, m.h, (x) => {
+    x.drawImage(src, 0, 0, m.w, m.h);
+    x.globalCompositeOperation = 'destination-in'; x.filter = 'blur(0.7px)'; x.fillStyle = '#000';
+    x.beginPath(); m.lip.forEach(([px, py], i) => (i ? x.lineTo(px, py) : x.moveTo(px, py))); x.closePath(); x.fill();
+  });
+  return lipTex;
+}
+function updateMouthFront() {
+  const on = tongue.visible && frog.painted && frog.pose === 'open' && !!lipTexture();
+  mouthFront.visible = on; if (!on) return;
+  if (lipSpr.texture !== lipTex) lipSpr.texture = lipTex;
+  lipSpr.anchor.copyFrom(frog.spr.anchor); lipSpr.transform.setFromMatrix(frogMatrix()); lipSpr.alpha = frog.c.alpha;
+  // a soft dark throat where the tongue leaves the mouth
+  const r = tongueRoot(), ca = Math.cos(tongue.ang), sa = Math.sin(tongue.ang);
+  lipShade.position.set(r.x + ca * 10, r.y + sa * 10); lipShade.rotation = tongue.ang + Math.PI / 2;
+  lipShade.width = 72; lipShade.height = 30; lipShade.alpha = 0.7 * Math.min(1, tongue.len / 40);
 }
 function updateFrog(dt) {
   if (frog.posing > 0) { frog.posing -= dt * speed; if (frog.posing <= 0 && frog.pose !== 'idle') setPose('idle'); }
@@ -6213,7 +6320,7 @@ async function playStrike(st, ctx) {
   // the frog opens up: mouth open, head up, eyes narrow
   setPose('open'); frog.posing = 9;
   await tween(0.1, (k) => { frog.tilt = -0.0 * k; frog.sy = 1 + 0.03 * k; });
-  const m0 = mouthPos();
+  const m0 = tongueRoot();
   tongue.base = m0; tongue.ang = Math.atan2(reach.y - m0.y, reach.x - m0.x); tongue.len = 0; tongue.wob = 0; tongue.visible = true;
   const full = Math.hypot(reach.x - m0.x, reach.y - m0.y) + 10;
   Sfx.play('tongue_out');
@@ -6231,7 +6338,7 @@ async function playStrike(st, ctx) {
   };
   const dOf = (i) => { const s = seatAt(i); return Math.hypot(s.x - m0.x, s.y - m0.y); };
   await tween(tm('tongueOut'), (k) => {
-    tongue.base = mouthPos();
+    tongue.base = tongueRoot();
     tongue.len = full * ease.out(k) + 12 * Math.sin(Math.PI * Math.min(1, k * 1.1));
     for (const i of colCells) if (tongue.len >= dOf(i) - 30) touch(i);
   });
@@ -6255,7 +6362,7 @@ async function playStrike(st, ctx) {
     }))));
   });
   // the tongue settles after the overshoot while the rings spread
-  const settle = tween(Math.max(hold, 0.08), (k) => { tongue.base = mouthPos(); tongue.len = full + 12 * (1 - ease.out(k)) * Math.cos(k * 6); });
+  const settle = tween(Math.max(hold, 0.08), (k) => { tongue.base = tongueRoot(); tongue.len = full + 12 * (1 - ease.out(k)) * Math.cos(k * 6); });
   await Promise.all([settle, ...ringJobs]);
   // Bug Jar: every remaining target on the board flies into the jar
   if (st.jar && st.jarCells.length) { if (ctx.onJar) ctx.onJar(); await jarCollect(st, stuck); }
@@ -6264,15 +6371,13 @@ async function playStrike(st, ctx) {
   Sfx.play('tongue_back');
   const L0 = tongue.len;
   await tween(tm('tongueBack'), (k) => {
-    tongue.base = mouthPos();
+    tongue.base = tongueRoot();
     tongue.len = L0 * (1 - ease.in3(k)); tongue.wob = 6 * Math.exp(-k * 3) * (k < 1 ? 1 : 0); tongue.wobT += 0;
     const tp = tongue.tipPos;
     for (const s of stuck) {
       if (s.b.destroyed) continue;
-      const d = Math.min(s.d, tongue.len);
-      const ca = Math.cos(tongue.ang), sa = Math.sin(tongue.ang);
-      const px = tongue.base.x + ca * d, py = tongue.base.y + sa * d;
-      if (s.d >= tongue.len) { s.b.position.set(tp.x + s.ox, tp.y + s.oy); } else s.b.position.set(px, py);
+      // a body rides its point on the bent tongue until the pad reaches it
+      if (s.d >= tongue.len) { s.b.position.set(tp.x + s.ox, tp.y + s.oy); } else { const q = tongue.at(s.d); s.b.position.set(q.x, q.y); }
       const near = tongue.len / Math.max(1, L0);
       s.b.sc = Math.max(0, s.sc * (near < 0.25 ? near / 0.25 : 1));
     }
@@ -6389,6 +6494,7 @@ function updateBoard(dt) {
   for (const b of stuckLayer.children) if (b instanceof Bug) b.update(dt);
   tongue.update(dt);
   tongue.tip.visible = tongue.visible;
+  updateMouthFront();
   board.alpha = 1; padLayer.alpha = bugLayer.alpha = 1 - boardDim * 0.4;
 }
 onLayout(() => { layoutPond(); if (tgt.c) layoutPanels(); layoutLogo(); });
